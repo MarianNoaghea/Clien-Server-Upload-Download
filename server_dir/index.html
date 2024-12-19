@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Messages and Uploaded Files</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            justify-content: space-between;
+            padding: 20px;
+        }
+        .container {
+            width: 48%;
+            border: 1px solid #ccc;
+            padding: 20px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+            border-radius: 8px;
+            overflow-y: auto;
+            max-height: 80vh;
+        }
+        h2 {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .messages, .files {
+            margin: 10px 0;
+        }
+        #messageForm input, #messageForm button {
+            width: 100%;
+            padding: 10px;
+            margin-top: 10px;
+        }
+        #messageForm button {
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div class="container" id="messagesContainer">
+        <h2>Messages Sent from HTTP Clients</h2>
+        <div id="messageOutput"></div>
+        <form action="/" method="POST" id="messageForm">
+            <input type="text" name="message" id="message" placeholder="Enter your message" required>
+            <button type="submit">Send</button>
+        </form>
+    </div>
+
+    <div class="container" id="filesContainer">
+        <h2>Files Uploaded by TCP Clients</h2>
+        <div id="fileOutput"></div>
+    </div>
+
+    <script>
+        // Handle message form submission
+        document.getElementById('messageForm').addEventListener('submit', function(event) {
+            event.preventDefault();
+
+            const message = document.getElementById('message').value;
+
+            // Append message locally
+            const messageDiv = document.createElement('div');
+            messageDiv.textContent = 'You: ' + message;
+            document.getElementById('messageOutput').appendChild(messageDiv);
+
+            // Send to server
+            fetch('/', {
+                method: 'POST',
+                body: new URLSearchParams({ message: message })
+            })
+            .then(response => response.text())
+            .then(data => {
+                const responseDiv = document.createElement('div');
+                responseDiv.textContent = 'Server: ' + data;
+                document.getElementById('messageOutput').appendChild(responseDiv);
+            });
+
+            // Clear input field
+            document.getElementById('message').value = '';
+        });
+
+        // Set up SSE for messages
+        const eventSourceMessages = new EventSource('/events');
+        eventSourceMessages.onmessage = function(event) {
+            const messageDiv = document.createElement('div');
+            messageDiv.textContent = 'Broadcast: ' + event.data;
+            document.getElementById('messageOutput').appendChild(messageDiv);
+        };
+
+        // Set up SSE for uploaded files (assuming a new SSE endpoint for files)
+        const eventSourceFiles = new EventSource('/files-events');
+        eventSourceFiles.onmessage = function(event) {
+            const fileDiv = document.createElement('div');
+            fileDiv.textContent = 'Uploaded File: ' + event.data;
+            document.getElementById('fileOutput').appendChild(fileDiv);
+        }
+    </script>
+</body>
+</html>

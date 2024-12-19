@@ -9,230 +9,176 @@
 #include <netdb.h>
 #include <bits/stdc++.h>
 #include <fcntl.h>
-#include <sys/types.h>
 #include <sys/stat.h>
 #include "../helpers.h"
 #include <dirent.h> 
 
 using namespace std;
 
-void usage(char *file)
-{
-	fprintf(stderr, "Usage: %s server_address server_port\n", file);
-	exit(0);
+void usage(char *file) {
+    fprintf(stderr, "Usage: %s server_address server_port\n", file);
+    exit(0);
 }
 
-int main(int argc, char *argv[])
-{
-	int sockfd, n, ret;
-	struct sockaddr_in serv_addr;
-	char buffer[BUFLEN];
+int main(int argc, char *argv[]) {
+    int sockfd, ret;
+    struct sockaddr_in serv_addr;
+    char buffer[BUFLEN];
 
-	if (argc < 3) {
-		usage(argv[0]);
-	}
+    if (argc < 3) {
+        usage(argv[0]);
+    }
 
-	fd_set read_fds;	// multimea de citire folosita in select()
-	fd_set tmp_fds;		// multime folosita temporar
-	int fdmax;			// valoare maxima fd din multimea read_fds
+    fd_set read_fds, tmp_fds;
+    int fdmax;
 
-	FD_ZERO(&tmp_fds);
-	FD_ZERO(&read_fds);
+    FD_ZERO(&tmp_fds);
+    FD_ZERO(&read_fds);
 
-	sockfd = socket(AF_INET, SOCK_STREAM, 0);
-	DIE(sockfd < 0, "socket");
+    sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    DIE(sockfd < 0, "socket");
 
-	FD_SET(sockfd, &read_fds);
-	FD_SET(0, &read_fds);
-	fdmax = sockfd;
+    FD_SET(sockfd, &read_fds);
+    FD_SET(0, &read_fds);
+    fdmax = sockfd;
 
-	serv_addr.sin_family = AF_INET;
-	serv_addr.sin_port = htons(atoi(argv[2]));
-	ret = inet_aton(argv[1], &serv_addr.sin_addr);
-	DIE(ret == 0, "inet_aton");
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_port = htons(atoi(argv[2]));
+    ret = inet_aton(argv[1], &serv_addr.sin_addr);
+    DIE(ret == 0, "inet_aton");
 
-	ret = connect(sockfd, (struct sockaddr*) &serv_addr, sizeof(serv_addr));
-	DIE(ret < 0, "connect");
+    ret = connect(sockfd, (struct sockaddr*) &serv_addr, sizeof(serv_addr));
+    DIE(ret < 0, "connect");
 
-	printf("---------------------------\n");
+    printf("---------------------------\n");
 
-	while (1) {
-  		// se citeste de la tastatura
-		tmp_fds = read_fds;
+    while (1) {
+        tmp_fds = read_fds;
+        select(fdmax + 1, &tmp_fds, NULL, NULL, NULL);
 
-		select(fdmax + 1, &tmp_fds, NULL, NULL, NULL);
+        if (FD_ISSET(0, &tmp_fds)) {
+            memset(buffer, 0, BUFLEN);
+            fgets(buffer, BUFLEN - 1, stdin);
 
-		if(FD_ISSET(0, &tmp_fds)) {
-			memset(buffer, 0, BUFLEN);
-			fgets(buffer, BUFLEN - 1, stdin);
+            if (strncmp(buffer, "exit", 4) == 0) {
+                break;
+            }
 
-			Msg msg;
+            if (strncmp(buffer, "upload", 6) == 0) {
+                char nume_fisier[50];
+                char nume_pe_server[50];
+                sscanf(buffer, "%*s %s %s", nume_fisier, nume_pe_server);
 
-			if (strncmp(buffer, "exit", 4) == 0) {
-				break;
-			} 
-			
-			if (strncmp(buffer, "upload", 5) == 0) {
-				char nume_fisier[50];
-				char nume_pe_server[50];
-				sscanf(buffer, "%*s %s %s", nume_fisier, nume_pe_server);
-				nume_fisier[strlen(nume_fisier)] = '\0';
-				nume_pe_server[strlen(nume_pe_server)] = '\0';
+                int miner_sursa = open(nume_fisier, O_RDONLY);
+                if (miner_sursa < 0) {
+                    perror("Error opening file");
+                    continue;
+                }
 
-				int miner_sursa, fileSize;
+                int fileSize = lseek(miner_sursa, 0, SEEK_END);
+                lseek(miner_sursa, 0, SEEK_SET);
 
-				miner_sursa = open(nume_fisier, O_RDONLY);
-				fileSize = lseek(miner_sursa, 0, SEEK_END);
-				lseek(miner_sursa, 0, SEEK_SET);
+                int numberOfPayloads = (fileSize + (MAX_LEN - 2 * sizeof(int) - 1)) / (MAX_LEN - 2 * sizeof(int));
+                printf("filesize = %d, number of payloads = %d\n", fileSize, numberOfPayloads);
 
-				Msg message;
+                Msg message;
+                memset(&message, 0, sizeof(Msg));
+                message.type = INFO_UPLOAD;
 
-				int numberOfPayloads = 0;
-				printf("filesize= %d\n", fileSize);
-				if(fileSize % (MAX_LEN - 2*sizeof(int)) == 0) {
-					numberOfPayloads = fileSize / (MAX_LEN - 2*sizeof(int));
-				} 
-				else {
-					numberOfPayloads = fileSize / (MAX_LEN - 2*sizeof(int)) + 1;
-  				}
+                Info info;
+                strcpy(info.fileName, nume_pe_server);
+                info.nrPayloads = numberOfPayloads;
+                memcpy(message.payload, &info, sizeof(Info));
 
-				message.type = INFO_UPLOAD;
-				Info info;
-				strcpy(info.fileName, nume_pe_server);
-				info.nrPayloads = numberOfPayloads;
+                send(sockfd, &message, sizeof(Msg), 0);
 
-				memcpy(message.payload, &info, sizeof(Info));
+                Msg response;
+                recv(sockfd, &response, sizeof(Msg), 0);
 
+                if (response.type == ACK) {
+                    printf("Server acknowledged upload.\n");
+                } else if (response.type == ALREADY_UPLOADED) {
+                    printf("File already uploaded: %s\n", response.payload);
+                    close(miner_sursa);
+                    continue;
+                }
 
-				send(sockfd, &message, sizeof(Msg), 0);
+                char stringMessage[MAX_LEN];
+                while (numberOfPayloads > 0) {
+                    Msg msg;
+                    memset(&msg, 0, sizeof(Msg));
+                    msg.type = MSG;
 
-				Msg msg2;
-				recv(sockfd, &msg2, sizeof(int), 0); // receive ACK
+                    msg.size = read(miner_sursa, stringMessage, MAX_LEN - 2 * sizeof(int));
+                    memcpy(msg.payload, stringMessage, msg.size);
 
-				if (msg2.type == ACK) {
-					printf("\nACK\n");	
-				} else if (msg2.type = ALREADY_UPLOADED) {
-					printf("%s",msg2.payload);
-					continue;
-				}
+                    send(sockfd, &msg, sizeof(Msg), 0);
+                    recv(sockfd, &response, sizeof(Msg), 0);
 
+                    if (response.type == ACK) {
+                        printf("Payload acknowledged by server.\n");
+                    }
 
-				// printf("%s|%s|%d", nume_fisier, nume_pe_server, numberOfPayloads);
+                    numberOfPayloads--;
+                }
 
-				char *stringMessage =(char*) calloc(MAX_LEN, sizeof(char)); 
+                close(miner_sursa);
+            }
 
-				while (numberOfPayloads) {
-					Msg msg;
-					msg.type = MSG;
-					
-					msg.size = read(miner_sursa, stringMessage, MAX_LEN - 2*sizeof(int));
-					memcpy(msg.payload, stringMessage, MAX_LEN - 2*sizeof(int));
+            if (strncmp(buffer, "download", 8) == 0) {
+                char nume_fisier[50];
+                char nume_local[50];
+                sscanf(buffer, "%*s %s %s", nume_fisier, nume_local);
 
-					// printf("########%s\n", msg.payload);
+                Msg msg;
+                memset(&msg, 0, sizeof(Msg));
+                msg.type = INFO_DOWNLOAD;
+                strcpy(msg.payload, nume_fisier);
 
-					printf("\ntrimit %d charuri\n", msg.size);
-					send(sockfd, &msg, sizeof(Msg), 0);
-					
-					Msg msg2;
-					recv(sockfd, &msg2, sizeof(int), 0); // receive ACK
+                send(sockfd, &msg, sizeof(Msg), 0);
 
+                Msg response;
+                recv(sockfd, &response, sizeof(Msg), 0);
 
-					if (msg2.type == ACK) {
-						printf("\nACK\n");	
-					}
+                if (response.type == FILE_NO_EXISTS) {
+                    printf("Server response: %s\n", response.payload);
+                    continue;
+                }
 
-					memset(stringMessage, 0, MAX_LEN - 2*sizeof(int));
-					memset(msg.payload, 0, MAX_LEN - 2*sizeof(int));
+                Info *info = (Info*) response.payload;
+                int miner_destinatie = open(nume_local, O_WRONLY | O_TRUNC | O_CREAT, 0644);
+                DIE(miner_destinatie < 0, "Error creating file");
 
-					numberOfPayloads--;
-				}
-			}
+                for (int i = 0; i < info->nrPayloads; i++) {
+                    Msg data;
+                    recv(sockfd, &data, sizeof(Msg), 0);
+                    write(miner_destinatie, data.payload, data.size);
 
-			if (strncmp(buffer, "download", 5) == 0) {
-				char nume_fisier[50];
-				char nume_local[50];
+                    Msg ack;
+                    ack.type = ACK;
+                    send(sockfd, &ack, sizeof(Msg), 0);
+                }
 
-				sscanf(buffer, "%*s %s %s %*s", nume_fisier, nume_local);
-				nume_fisier[strlen(nume_fisier)] = '\0';
-				nume_local[strlen(nume_local)] = '\0';
+                close(miner_destinatie);
+                printf("Download complete.\n");
+            }
 
-				Msg msg;
-				msg.type = INFO_DOWNLOAD;
-				strcpy(msg.payload, nume_fisier);
+            if (strncmp(buffer, "ls", 2) == 0) {
+                DIR *d;
+                struct dirent *dir;
+                d = opendir(".");
+                if (d) {
+                    while ((dir = readdir(d)) != NULL) {
+                        if (strcmp(dir->d_name, ".") != 0 && strcmp(dir->d_name, "..") != 0)
+                            printf("%s ", dir->d_name);
+                    }
+                    closedir(d);
+                }
+                printf("\n");
+            }
+        }
+    }
 
-				send(sockfd, &msg, sizeof(Msg), 0);
-				Msg msgRecv;
-
-				recv(sockfd, &msgRecv, sizeof(Msg), 0);
-
-				printf("type = %d\n", msgRecv.type);
-
-				if (msgRecv.type == FILE_NO_EXISTS) {
-					printf("%s\n",msgRecv.payload);
-					continue;
-				} else if(msg.type == ACK) {
-					printf("ACK\n");
-				}
-
-				
-				Info* info;
-				int miner_destinatie;
-				memset(&msgRecv, 0, sizeof(Msg));
-				recv(sockfd, &msgRecv, sizeof(Msg), 0);
-
-				
-
-				
-
-				if (msgRecv.type == INFO_DOWNLOAD) {
-					info = (Info*) msgRecv.payload;
-					printf("%s %d\n", nume_local, info->nrPayloads);
-
-					miner_destinatie = open(nume_local, O_WRONLY | O_TRUNC | O_CREAT, 0644);
-					lseek(miner_destinatie, 0, SEEK_SET);
-
-					while (info->nrPayloads) {
-						Msg m;
-						recv(sockfd, &m, sizeof(Msg), 0);
-						printf("\nprimesc %d charuri\n", m.size);
-
-						write(miner_destinatie, m.payload, m.size);
-
-						Msg m2;
-						m2.type = ACK;
-						send(sockfd, &m2, sizeof(int), 0); // ACK
-
-						info->nrPayloads--;
-					}
-				}
-			}
-
-			if (strncmp(buffer, "ls", 2) == 0) {
-				DIR *d;
-				struct dirent *dir;
-				d = opendir(".");
-				if (d) {
-					while ((dir = readdir(d)) != NULL) {
-					if (strcmp(dir->d_name, ".") != 0 && strcmp(dir->d_name, "..") != 0)
-						printf("%s ", dir->d_name);
-					}
-					closedir(d);
-				}
-			}
-
-
-			
-			DIE(n < 0, "send");
-		} else {
-			// Msg msgRecv;
-			// memset(&msgRecv, 0, MAX_LEN);
-			// recv(sockfd, &msgRecv, MAX_LEN, 0);
-
-			// printf("%s", msgRecv.payload);
-		}
-	}
-
-	close(sockfd);
-
-	return 0;
+    close(sockfd);
+    return 0;
 }
